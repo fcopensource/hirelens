@@ -1,0 +1,36 @@
+name: Django checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run deployment-independent checks
+        env:
+          DJANGO_SECRET_KEY: ci-only-secret-key-not-used-in-production
+          DJANGO_DEBUG: "false"
+          DJANGO_ALLOWED_HOSTS: testserver
+          SECURE_SSL_REDIRECT: "false"
+        run: |
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+          python manage.py test

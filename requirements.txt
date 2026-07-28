@@ -1,0 +1,11 @@
+Django>=6.0,<6.1
+openai>=2.16,<3
+whitenoise>=6.9,<7
+gunicorn>=23,<24
+dj-database-url>=3.0,<4
+psycopg[binary]>=3.2,<4
+python-dotenv>=1.1,<2
+httpx>=0.28,<1
+pypdf>=6.0,<7
+python-docx>=1.2,<2
+PyMySQL>=1.1,<2
