@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{% static 'css/interview.css' %}">
+  <link rel="stylesheet" href="{% static 'css/interview.css' %}?v=20260801-integrity-17">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
 </head>
 <body
@@ -20,6 +20,7 @@
   data-realtime-model="{{ realtime_model }}"
   data-realtime-available="{{ realtime_available|yesno:'true,false' }}"
   data-max-minutes="{{ max_minutes }}"
+  data-default-minutes="{{ default_minutes }}"
 >
   <header class="topbar">
     <a class="brand" href="/" aria-label="HireLens home">
@@ -28,6 +29,7 @@
       <small>LIVE INTERVIEW INTELLIGENCE</small>
     </a>
     <div class="topbar-status">
+      <span class="efficiency-pill"><i data-lucide="leaf"></i> Lean AI mode</span>
       <span class="privacy-pill"><i data-lucide="shield-check"></i> Local vision · private API key</span>
       <button class="icon-button" id="soundToggle" type="button" aria-label="Toggle interviewer audio"><i data-lucide="volume-2"></i></button>
     </div>
@@ -38,11 +40,11 @@
       <div class="setup-copy">
         <div class="eyebrow"><span></span> FACE-TO-FACE WITH AI</div>
         <h1>A real interview.<br><em>Not another form.</em></h1>
-        <p class="lead">Speak naturally with Maya in a fast, interruptible video-call experience. Practice, learn, translate, and interview from your own resume.</p>
+        <p class="lead">Speak naturally with your chosen interviewer in a fast, interruptible video-call experience. Practice, learn, translate, and interview from your own resume.</p>
         <div class="feature-row">
           <div><i data-lucide="radio-tower"></i><span><strong>Live voice</strong>Natural turns with no submit button</span></div>
           <div><i data-lucide="scan-line"></i><span><strong>Full-frame guidance</strong>Face, upper body, hands and clarity</span></div>
-          <div><i data-lucide="languages"></i><span><strong>Multilingual</strong>Talk and learn in your language</span></div>
+          <div><i data-lucide="gauge"></i><span><strong>Spend-aware</strong>Short answers and live token visibility</span></div>
         </div>
       </div>
 
@@ -59,6 +61,19 @@
             <label class="field"><span>Email <small>optional</small></span><input id="candidateEmail" name="email" type="email" autocomplete="email" maxlength="254" placeholder="you@company.com"></label>
           </div>
           <label class="field">
+            <span>Choose your interviewer</span>
+            <div class="interviewer-picker" role="radiogroup" aria-label="Interviewer appearance and voice">
+              <label>
+                <input type="radio" name="interviewer_style" value="female" checked>
+                <span><b class="interviewer-option-avatar female">M</b><span><strong>Maya</strong><small>Female interviewer · Marin voice</small></span><i data-lucide="check"></i></span>
+              </label>
+              <label>
+                <input type="radio" name="interviewer_style" value="male">
+                <span><b class="interviewer-option-avatar male">A</b><span><strong>Arjun</strong><small>Male interviewer · Cedar voice</small></span><i data-lucide="check"></i></span>
+              </label>
+            </div>
+          </label>
+          <label class="field">
             <span>Role you’re preparing for</span>
             <div class="input-icon"><i data-lucide="briefcase-business"></i><input id="targetRole" name="role" type="text" maxlength="160" placeholder="Senior Python Engineer" required></div>
           </label>
@@ -71,7 +86,7 @@
               </select>
             </label>
             <label class="field">
-              <span>Maya’s language</span>
+              <span>Interview language</span>
               <select id="responseLanguage" name="response_language">
                 <option value="auto">Match my language</option>
                 <option value="english">English</option>
@@ -91,6 +106,30 @@
               <label><input type="radio" name="level" value="senior"><span>Senior</span></label>
             </div>
           </label>
+
+          <label class="field">
+            <span>Session budget <small>Shorter sessions use less voice AI</small></span>
+            <div class="budget-picker" role="radiogroup" aria-label="Session budget">
+              <label>
+                <input type="radio" name="planned_minutes" value="8" {% if default_minutes == 8 %}checked{% endif %}>
+                <span><strong>Focused</strong><small>8 min</small></span>
+              </label>
+              <label>
+                <input type="radio" name="planned_minutes" value="12" {% if default_minutes == 12 %}checked{% endif %}>
+                <span><strong>Balanced</strong><small>12 min · recommended</small></span>
+              </label>
+              <label>
+                <input type="radio" name="planned_minutes" value="20" {% if default_minutes == 20 %}checked{% endif %}>
+                <span><strong>Deep</strong><small>20 min</small></span>
+              </label>
+            </div>
+          </label>
+
+          <div class="lean-summary">
+            <span><i data-lucide="radio-tower"></i><strong>Mini voice</strong></span>
+            <span><i data-lucide="minimize-2"></i><strong>Compact memory</strong></span>
+            <span><i data-lucide="activity"></i><strong>Live usage</strong></span>
+          </div>
 
           <label class="resume-drop" id="resumeDrop">
             <input id="resumeFile" name="resume" type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain">
@@ -124,7 +163,7 @@
           <label class="consent">
             <input id="consent" type="checkbox" required>
             <span class="check-ui"><i data-lucide="check"></i></span>
-            <span>I consent to camera and microphone use. Local vision checks framing and clarity; only timestamped interruption events are stored. <button type="button" id="privacyOpen">Details</button></span>
+            <span>I consent to camera, microphone, fullscreen focus checks, and local vision calibration. Only aggregate quality metrics and timestamped interruptions are stored. <button type="button" id="privacyOpen">Details</button></span>
           </label>
           <p class="form-error" id="setupError" role="alert"></p>
           <button class="primary-button" id="startButton" type="submit"><span>Join live interview</span><i data-lucide="video"></i></button>
@@ -137,10 +176,11 @@
       <div class="call-header">
         <div class="session-title">
           <span class="live-dot"></span>
-          <div><span>LIVE WITH MAYA</span><strong id="roleLabel">Role interview</strong></div>
+          <div><span id="liveInterviewerLabel">LIVE WITH MAYA</span><strong id="roleLabel">Role interview</strong></div>
         </div>
         <div class="connection-pill" id="connectionBadge"><span></span> Connecting…</div>
         <div class="call-meta">
+          <span class="usage-meter" id="usageMeter" title="Realtime response-token estimate; transcription and recap are separate."><i data-lucide="leaf"></i><strong>Lean · 0 tokens</strong></span>
           <span id="sessionModeLabel">Interview</span>
           <span class="divider"></span>
           <strong id="sessionTimer">00:00</strong>
@@ -151,7 +191,7 @@
       <div class="call-shell">
         <div class="call-grid">
           <article class="call-tile interviewer-tile">
-            <canvas id="avatarCanvas" aria-label="Animated 3D interviewer Maya"></canvas>
+            <canvas id="avatarCanvas" aria-label="Animated 3D interviewer"></canvas>
             <div class="avatar-fallback" id="avatarFallback">
               <div class="avatar-head"><span class="hair"></span><span class="eye left"></span><span class="eye right"></span><span class="mouth"></span></div>
               <div class="avatar-body"></div>
@@ -161,8 +201,8 @@
               <span class="role-chip"><span></span> AI INTERVIEWER</span>
               <span class="voice-state" id="speakingState"><i data-lucide="ear"></i> Listening</span>
             </div>
-            <div class="live-caption maya-caption" id="mayaCaption">Maya is joining the room…</div>
-            <div class="nameplate"><span class="maya-avatar">M</span><span><strong>Maya</strong><small>Live interviewer &amp; coach</small></span></div>
+            <div class="nameplate"><span class="maya-avatar" id="interviewerInitial">M</span><span><strong id="interviewerName">Maya</strong><small>Live interviewer &amp; coach</small></span></div>
+            <div class="studio-signature"><i data-lucide="sparkles"></i> <span id="studioName">Maya Studio</span></div>
           </article>
 
           <article class="call-tile candidate-tile">
@@ -179,8 +219,11 @@
                 <span id="clarityChip"><i data-lucide="sun-medium"></i> Clarity</span>
               </div>
             </div>
-            <div class="coaching-banner" id="coachingBanner" hidden><i data-lucide="scan-line"></i><span></span></div>
-            <div class="live-caption candidate-caption" id="candidateCaption" hidden></div>
+            <div class="coaching-banner" id="coachingBanner" hidden>
+              <i data-lucide="scan-line"></i>
+              <span></span>
+              <button type="button" id="coachingFeedback">Not accurate</button>
+            </div>
             <div class="nameplate candidate-nameplate">
               <span class="camera-avatar" id="candidateInitial">V</span>
               <span><strong id="candidateLabel">You</strong><small><span class="motion-dot"></span> Movement <b id="motionValue">ready</b></small></span>
@@ -189,9 +232,15 @@
               <div><span>Eyes</span><strong id="eyeStatus">loading</strong></div>
               <div><span>Posture</span><strong id="postureStatus">loading</strong></div>
               <div><span>Hands</span><strong id="handStatus">loading</strong></div>
-              <div><span>Tracking</span><strong id="trackingFps">starting</strong></div>
+              <div title="Live model confidence, not a guaranteed accuracy score"><span>Tracking</span><strong id="trackingFps">starting</strong></div>
             </div>
           </article>
+        </div>
+
+        <div class="conversation-rail" id="captionRail" aria-live="polite" aria-atomic="true">
+          <div class="caption-speaker maya" id="captionSpeaker"><span></span><strong>Maya</strong></div>
+          <p id="activeCaption">Maya is joining the room…</p>
+          <button type="button" id="captionExpand" title="Open full transcript"><i data-lucide="align-left"></i><span>Full transcript</span></button>
         </div>
 
         <aside class="transcript-drawer" id="transcriptDrawer" aria-label="Live transcript">
@@ -210,7 +259,7 @@
       </div>
 
       <div class="text-composer" id="textComposer" hidden>
-        <input id="textMessage" type="text" maxlength="2000" placeholder="Type a message to Maya…">
+        <input id="textMessage" type="text" maxlength="2000" placeholder="Type a message to your interviewer…">
         <button id="textSend" type="button" aria-label="Send message"><i data-lucide="send"></i></button>
       </div>
 
@@ -233,19 +282,32 @@
     <section class="complete-view" id="completeView" hidden>
       <div class="completion-card">
         <div class="success-orbit"><span><i data-lucide="check"></i></span></div>
-        <span class="step-tag">SESSION COMPLETE</span>
-        <h1>Well done, <span id="completeName">candidate</span>.</h1>
-        <p>Your live conversation was saved and is ready for thoughtful human review.</p>
+        <span class="step-tag" id="completionTag">SESSION COMPLETE</span>
+        <h1 id="completionTitle">Well done, <span id="completeName">candidate</span>.</h1>
+        <p id="completionMessage">Your live conversation was saved and is ready for thoughtful human review.</p>
         <div class="summary-panel" id="summaryPanel"><div class="summary-loading"><span></span><span></span><span></span><p>Preparing your discussion recap…</p></div></div>
         <div class="completion-meta">
           <div><i data-lucide="messages-square"></i><span><strong id="answeredCount">0</strong>Conversation turns</span></div>
           <div><i data-lucide="clock-3"></i><span><strong id="totalDuration">—</strong>Total duration</span></div>
+          <div><i data-lucide="badge-dollar-sign"></i><span><strong id="finalUsage">0 tokens</strong>Realtime usage</span></div>
           <div><i data-lucide="shield-check"></i><span><strong id="finalEventCount">0</strong>Observed interruptions</span></div>
         </div>
         <button class="secondary-button" id="newInterview" type="button"><i data-lucide="rotate-ccw"></i> Start another session</button>
       </div>
     </section>
   </main>
+
+  <div class="integrity-shield" id="integrityShield" role="alertdialog" aria-modal="true" aria-labelledby="integrityTitle" hidden>
+    <div class="integrity-card">
+      <span class="integrity-icon"><i data-lucide="shield-alert"></i></span>
+      <span class="integrity-kicker">SESSION INTEGRITY</span>
+      <h2 id="integrityTitle">Return to the interview</h2>
+      <p id="integrityReason">The interview window must remain visible and fullscreen.</p>
+      <div class="integrity-countdown"><strong id="integrityCountdown">5</strong><span>seconds to restore the session</span></div>
+      <button type="button" id="restoreIntegrity"><i data-lucide="maximize"></i> Restore interview</button>
+      <small>This interruption is recorded as browser context, not proof of misconduct.</small>
+    </div>
+  </div>
 
   <dialog id="privacyDialog">
     <button class="dialog-close" type="button" data-close-dialog aria-label="Close"><i data-lucide="x"></i></button>
@@ -254,14 +316,14 @@
     <p>Face, eye, hand, and pose landmarks are processed locally to help with framing, visible hands, posture, movement, lighting, focus, and image clarity.</p>
     <ul>
       <li><i data-lucide="check"></i><span><strong>No recognition or emotion analysis.</strong> The system does not identify or judge your face.</span></li>
-      <li><i data-lucide="check"></i><span><strong>No raw camera upload.</strong> Only timestamped setup or interruption events are stored.</span></li>
-      <li><i data-lucide="check"></i><span><strong>No automatic hiring decision.</strong> Visual signals are separated from the discussion recap.</span></li>
-      <li><i data-lucide="check"></i><span><strong>Resume text is treated as untrusted context.</strong> It helps Maya ask relevant questions.</span></li>
+      <li><i data-lucide="check"></i><span><strong>No raw camera upload.</strong> Only aggregate calibration ratios, feedback, and timestamped setup or interruption events are stored—never images or raw landmarks.</span></li>
+      <li><i data-lucide="check"></i><span><strong>No automatic cheating or hiring decision.</strong> Visual and browser signals require human context and are separated from the discussion recap.</span></li>
+      <li><i data-lucide="check"></i><span><strong>Resume text is treated as untrusted context.</strong> It helps the interviewer ask relevant questions.</span></li>
     </ul>
     <button class="primary-button" type="button" data-close-dialog>I understand</button>
   </dialog>
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script type="module" src="{% static 'js/interview.js' %}"></script>
+  <script type="module" src="{% static 'js/interview.js' %}?v=20260801-join-fix-19"></script>
 </body>
 </html>

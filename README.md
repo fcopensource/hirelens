@@ -19,8 +19,12 @@ practice, and consent-based local camera guidance.
   upper-body posture, 21-point hand landmarks, natural movement, lighting, and
   blur guidance. Models load progressively so face tracking starts while body
   and hand tracking finish loading.
+- Learns a 10-second per-session camera baseline before coaching, evaluates
+  sustained rolling windows instead of single frames, and offers a
+  `Not accurate` control for false prompts.
 - Records tab hiding, focus loss, and fullscreen exits.
-- Stores event metadata only; it does not upload raw camera frames.
+- Stores timestamped event metadata, aggregate calibration ratios, and explicit
+  false-prompt feedback. It never uploads raw frames or raw landmarks.
 - Can ask Maya to say a brief camera-adjustment message during the call.
 - Shows a live local tracking HUD and persistent landmark overlay so candidates
   can correct their own framing immediately.
@@ -55,11 +59,15 @@ UTF-8 and strict transactional mode.
 ## Cost controls
 
 Live calls use `gpt-realtime-2.1-mini`; recaps and the non-Realtime fallback use
-`gpt-5.6-terra`. The paid API key never enters browser JavaScript. Sessions
-default to 25 minutes, output length is capped, starts are rate-limited, and
-non-Realtime model calls are capped. Adjust `INTERVIEW_MAX_MINUTES`,
+the cost-focused `gpt-5.6-luna`. The paid API key never enters browser
+JavaScript. Sessions default to 12 minutes, candidates can choose an 8, 12, or
+20 minute budget, output length is capped, starts are rate-limited, and
+non-Realtime model calls are capped. Adjust `INTERVIEW_DEFAULT_MINUTES`,
+`INTERVIEW_MAX_MINUTES`,
 `INTERVIEW_STARTS_PER_HOUR`, and `OPENAI_MAX_REQUESTS_PER_INTERVIEW` to match
-your budget. A public deployment should always set `INTERVIEW_ACCESS_CODE`.
+your budget. The live room shows Realtime response-token usage and a cost
+estimate; transcription is billed separately and is not included in that
+estimate. A public deployment should always set `INTERVIEW_ACCESS_CODE`.
 
 ## Deploy today
 
@@ -68,7 +76,9 @@ PostgreSQL. Set these secrets in the hosting dashboard:
 
 - `OPENAI_API_KEY`
 - `OPENAI_REALTIME_MODEL` (defaults to `gpt-realtime-2.1-mini`)
-- `OPENAI_REALTIME_VOICE` (defaults to `marin`)
+- `OPENAI_REALTIME_VOICE` (legacy/default female voice, defaults to `marin`)
+- `OPENAI_REALTIME_VOICE_FEMALE` (defaults to `marin`)
+- `OPENAI_REALTIME_VOICE_MALE` (defaults to `cedar`)
 - `DJANGO_ALLOWED_HOSTS` (for example, `your-app.onrender.com`)
 - `CSRF_TRUSTED_ORIGINS` (for example, `https://your-app.onrender.com`)
 - `INTERVIEW_ACCESS_CODE` (strongly recommended to prevent public API spend)
@@ -93,3 +103,8 @@ Monitoring events are observable browser signals, not proof of misconduct.
 They must not be used as an automatic hiring decision. Provide candidates with
 notice, a reasonable accommodation path, retention information, and a way to
 request human review before production use.
+
+The adaptive calibration data is suitable for threshold tuning and offline
+validation. It is deliberately not a biometric training corpus. Training a
+separate employment model requires a representative, consented, labeled
+dataset, bias testing, retention controls, and human validation before use.

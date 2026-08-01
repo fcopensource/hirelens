@@ -156,7 +156,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 OPENAI_MODEL = (
     os.getenv("OPENAI_INTERVIEW_MODEL", "").strip()
     or os.getenv("OPENAI_MODEL", "").strip()
-    or "gpt-5.6-terra"
+    or "gpt-5.6-luna"
 )
 OPENAI_REALTIME_MODEL = (
     os.getenv("OPENAI_REALTIME_MODEL", "").strip()
@@ -166,16 +166,31 @@ OPENAI_REALTIME_VOICE = (
     os.getenv("OPENAI_REALTIME_VOICE", "").strip()
     or "marin"
 )
+OPENAI_REALTIME_VOICE_FEMALE = (
+    os.getenv("OPENAI_REALTIME_VOICE_FEMALE", "").strip()
+    or OPENAI_REALTIME_VOICE
+)
+OPENAI_REALTIME_VOICE_MALE = (
+    os.getenv("OPENAI_REALTIME_VOICE_MALE", "").strip()
+    or "cedar"
+)
 OPENAI_TRANSCRIPTION_MODEL = (
     os.getenv("OPENAI_TRANSCRIPTION_MODEL", "").strip()
     or "gpt-4o-mini-transcribe"
 )
 OPENAI_TIMEOUT_SECONDS = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "20"))
 OPENAI_MAX_REQUESTS_PER_INTERVIEW = int(
-    os.getenv("OPENAI_MAX_REQUESTS_PER_INTERVIEW", "8")
+    os.getenv("OPENAI_MAX_REQUESTS_PER_INTERVIEW", "4")
 )
 INTERVIEW_QUESTION_COUNT = int(os.getenv("INTERVIEW_QUESTION_COUNT", "6"))
-INTERVIEW_MAX_MINUTES = int(os.getenv("INTERVIEW_MAX_MINUTES", "25"))
+INTERVIEW_MAX_MINUTES = int(os.getenv("INTERVIEW_MAX_MINUTES", "20"))
+INTERVIEW_DEFAULT_MINUTES = max(
+    5,
+    min(
+        int(os.getenv("INTERVIEW_DEFAULT_MINUTES", "12")),
+        INTERVIEW_MAX_MINUTES,
+    ),
+)
 INTERVIEW_ACCESS_CODE = os.getenv("INTERVIEW_ACCESS_CODE", "")
 INTERVIEW_STARTS_PER_HOUR = int(os.getenv("INTERVIEW_STARTS_PER_HOUR", "5"))
 

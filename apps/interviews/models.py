@@ -14,6 +14,10 @@ class InterviewSession(models.Model):
         INTERVIEW = "interview", "Interview"
         PRACTICE = "practice", "Practice and learn"
 
+    class InterviewerStyle(models.TextChoices):
+        FEMALE = "female", "Female — Maya"
+        MALE = "male", "Male — Arjun"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     candidate_name = models.CharField(max_length=120)
     candidate_email = models.EmailField(blank=True)
@@ -23,6 +27,12 @@ class InterviewSession(models.Model):
         max_length=20, choices=Mode.choices, default=Mode.INTERVIEW
     )
     response_language = models.CharField(max_length=40, default="auto")
+    interviewer_style = models.CharField(
+        max_length=12,
+        choices=InterviewerStyle.choices,
+        default=InterviewerStyle.FEMALE,
+    )
+    planned_minutes = models.PositiveSmallIntegerField(default=12)
     resume = models.FileField(upload_to="resumes/%Y/%m/", blank=True)
     resume_original_name = models.CharField(max_length=255, blank=True)
     resume_text = models.TextField(blank=True)
@@ -36,6 +46,7 @@ class InterviewSession(models.Model):
     transcript = models.JSONField(default=list, blank=True)
     monitoring_summary = models.JSONField(default=dict, blank=True)
     discussion_summary = models.JSONField(default=dict, blank=True)
+    ai_usage = models.JSONField(default=dict, blank=True)
     openai_request_count = models.PositiveSmallIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

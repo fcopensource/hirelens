@@ -23,6 +23,11 @@ urlpatterns = [
         name="events",
     ),
     path(
+        "api/interviews/<uuid:interview_id>/calibration/",
+        views.record_vision_calibration,
+        name="calibration",
+    ),
+    path(
         "api/interviews/<uuid:interview_id>/realtime/",
         views.realtime_session,
         name="realtime",

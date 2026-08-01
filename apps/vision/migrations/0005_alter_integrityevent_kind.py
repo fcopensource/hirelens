@@ -1,0 +1,34 @@
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ("vision", "0004_visioncalibration"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="integrityevent",
+            name="kind",
+            field=models.CharField(
+                choices=[
+                    ("face_missing", "Face not visible"),
+                    ("multiple_faces", "Multiple faces visible"),
+                    ("gaze_away", "Attention moved away"),
+                    ("tab_hidden", "Tab hidden"),
+                    ("window_blur", "Window lost focus"),
+                    ("fullscreen_exit", "Fullscreen exited"),
+                    ("camera_off", "Camera unavailable"),
+                    ("microphone_off", "Microphone unavailable"),
+                    ("body_not_framed", "Upper body not framed"),
+                    ("hands_not_visible", "Hands not visible"),
+                    ("camera_blurry", "Camera image blurry"),
+                    ("low_light", "Lighting too low"),
+                    ("excessive_motion", "Framing movement too high"),
+                    ("vision_unavailable", "Local vision model unavailable"),
+                    ("restricted_shortcut", "Restricted shortcut observed"),
+                ],
+                max_length=40,
+            ),
+        ),
+    ]

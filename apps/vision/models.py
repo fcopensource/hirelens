@@ -17,6 +17,7 @@ class IntegrityEvent(models.Model):
         LOW_LIGHT = "low_light", "Lighting too low"
         EXCESSIVE_MOTION = "excessive_motion", "Framing movement too high"
         VISION_UNAVAILABLE = "vision_unavailable", "Local vision model unavailable"
+        RESTRICTED_SHORTCUT = "restricted_shortcut", "Restricted shortcut observed"
 
     interview = models.ForeignKey(
         "interviews.InterviewSession",
@@ -31,3 +32,22 @@ class IntegrityEvent(models.Model):
 
     class Meta:
         ordering = ["occurred_at"]
+
+
+class VisionCalibration(models.Model):
+    interview = models.OneToOneField(
+        "interviews.InterviewSession",
+        on_delete=models.CASCADE,
+        related_name="vision_calibration",
+    )
+    model_version = models.CharField(max_length=50)
+    calibrated = models.BooleanField(default=False)
+    sample_count = models.PositiveIntegerField(default=0)
+    metrics = models.JSONField(default=dict, blank=True)
+    windows = models.JSONField(default=list, blank=True)
+    feedback = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.interview_id} — {self.model_version}"

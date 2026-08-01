@@ -9,11 +9,13 @@ class InterviewSessionAdmin(admin.ModelAdmin):
         "candidate_name",
         "role",
         "level",
+        "interviewer_style",
         "status",
+        "planned_minutes",
         "current_question",
         "created_at",
     )
-    list_filter = ("status", "level", "created_at")
+    list_filter = ("status", "level", "interviewer_style", "created_at")
     search_fields = ("candidate_name", "candidate_email", "role")
     readonly_fields = (
         "created_at",
@@ -22,4 +24,5 @@ class InterviewSessionAdmin(admin.ModelAdmin):
         "started_at",
         "completed_at",
         "openai_request_count",
+        "ai_usage",
     )

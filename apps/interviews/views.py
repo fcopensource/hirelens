@@ -13,7 +13,7 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.vision.models import IntegrityEvent
+from apps.vision.models import IntegrityEvent, VisionCalibration
 from apps.resumes.services import ResumeError, validate_and_extract_resume
 
 from .models import InterviewSession
@@ -25,6 +25,15 @@ from .services import (
 )
 
 logger = logging.getLogger(__name__)
+
+REALTIME_MINI_RATES_PER_MILLION = {
+    "text_input": 0.60,
+    "text_cached": 0.06,
+    "text_output": 2.40,
+    "audio_input": 10.00,
+    "audio_cached": 0.30,
+    "audio_output": 20.00,
+}
 
 
 def _openai_api_key():
@@ -63,6 +72,7 @@ def index(request):
             "realtime_available": bool(_openai_api_key()),
             "access_code_required": bool(settings.INTERVIEW_ACCESS_CODE),
             "max_minutes": settings.INTERVIEW_MAX_MINUTES,
+            "default_minutes": settings.INTERVIEW_DEFAULT_MINUTES,
         },
     )
 
@@ -101,6 +111,16 @@ def start_interview(request):
     }
     if response_language not in allowed_languages:
         response_language = "auto"
+    interviewer_style = str(data.get("interviewer_style", InterviewSession.InterviewerStyle.FEMALE))
+    if interviewer_style not in InterviewSession.InterviewerStyle.values:
+        interviewer_style = InterviewSession.InterviewerStyle.FEMALE
+    try:
+        requested_minutes = int(data.get("planned_minutes", settings.INTERVIEW_DEFAULT_MINUTES))
+    except (TypeError, ValueError):
+        requested_minutes = settings.INTERVIEW_DEFAULT_MINUTES
+    if requested_minutes not in {8, 12, 20}:
+        requested_minutes = settings.INTERVIEW_DEFAULT_MINUTES
+    planned_minutes = max(5, min(requested_minutes, settings.INTERVIEW_MAX_MINUTES))
     wants_realtime = data.get("realtime") is True
     if not name or not role:
         return _error("Your name and target role are required.")
@@ -123,6 +143,8 @@ def start_interview(request):
         level=level,
         mode=mode,
         response_language=response_language,
+        interviewer_style=interviewer_style,
+        planned_minutes=planned_minutes,
         resume=resume_file or "",
         resume_original_name=(resume_file.name[:255] if resume_file else ""),
         resume_text=resume_text,
@@ -143,6 +165,13 @@ def start_interview(request):
                 "realtime_available": bool(_openai_api_key()),
                 "resume_name": interview.resume_original_name,
                 "mode": interview.mode,
+                "interviewer_style": interview.interviewer_style,
+                "interviewer_name": (
+                    "Arjun"
+                    if interview.interviewer_style == InterviewSession.InterviewerStyle.MALE
+                    else "Maya"
+                ),
+                "max_minutes": interview.planned_minutes,
             }
         )
 
@@ -167,6 +196,8 @@ def start_interview(request):
             "question_number": 1,
             "question_count": settings.INTERVIEW_QUESTION_COUNT,
             "source": "openai" if used_ai else "local",
+            "max_minutes": interview.planned_minutes,
+            "interviewer_style": interview.interviewer_style,
         }
     )
 
@@ -256,18 +287,128 @@ def record_event(request, interview_id):
         duration_ms = 0
     raw_details = data.get("details")
     details = raw_details if isinstance(raw_details, dict) else {}
+    safe_details = {
+        key: value
+        for key, value in details.items()
+        if key in {"face_count", "confidence", "reason", "countdown_seconds"}
+    }
+    if "shortcut" in details:
+        safe_details["shortcut"] = str(details["shortcut"])[:80]
+    if "reason" in safe_details:
+        safe_details["reason"] = str(safe_details["reason"])[:240]
     event = IntegrityEvent.objects.create(
         interview=interview,
         kind=kind,
         duration_ms=duration_ms,
-        details={
-            key: value
-            for key, value in details.items()
-            if key in {"face_count", "confidence", "reason"}
-        },
+        details=safe_details,
         occurred_at=occurred_at,
     )
     return JsonResponse({"ok": True, "event_id": event.id})
+
+
+@require_POST
+def record_vision_calibration(request, interview_id):
+    interview = get_object_or_404(InterviewSession, id=interview_id)
+    if interview.status != InterviewSession.Status.ACTIVE:
+        return _error("Interview is not active.", 409)
+    data = _payload(request)
+    model_version = "".join(
+        character
+        for character in str(data.get("model_version", "adaptive-local-v1"))[:50]
+        if character.isalnum() or character in {".", "-", "_"}
+    )
+    if not model_version:
+        return _error("Vision model version is required.")
+    action = str(data.get("action", "window"))
+    if action not in {"calibrated", "window", "feedback", "complete"}:
+        return _error("Unknown calibration action.")
+
+    metric_limits = {
+        "face_presence_ratio": 1.0,
+        "shoulder_presence_ratio": 1.0,
+        "posture_alignment_ratio": 1.0,
+        "hand_presence_ratio": 1.0,
+        "gaze_stability_ratio": 1.0,
+        "clarity_ratio": 1.0,
+        "calibration_confidence": 1.0,
+        "movement_score": 1.0,
+        "average_fps": 120.0,
+        "tracking_confidence": 1.0,
+        "current_face_count": 2.0,
+        "current_hand_count": 2.0,
+        "upper_body_visible": 1.0,
+        "current_gaze_aligned": 1.0,
+    }
+    raw_metrics = data.get("metrics")
+    raw_metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+    metrics = {}
+    for key, maximum in metric_limits.items():
+        try:
+            value = float(raw_metrics.get(key))
+        except (TypeError, ValueError):
+            continue
+        if value != value or value in {float("inf"), float("-inf")}:
+            continue
+        metrics[key] = round(max(0.0, min(value, maximum)), 4)
+    try:
+        sample_count = max(0, min(int(data.get("sample_count", 0)), 10_000_000))
+    except (TypeError, ValueError):
+        sample_count = 0
+
+    calibration, _ = VisionCalibration.objects.get_or_create(
+        interview=interview,
+        defaults={"model_version": model_version},
+    )
+    calibration.model_version = model_version
+    calibration.sample_count = max(calibration.sample_count, sample_count)
+    calibration.metrics = metrics
+    if action == "calibrated":
+        calibration.calibrated = True
+
+    windows = list(calibration.windows) if isinstance(calibration.windows, list) else []
+    if action in {"calibrated", "window", "complete"}:
+        windows.append(
+            {
+                "action": action,
+                "at": timezone.now().isoformat(),
+                "sample_count": sample_count,
+                "metrics": metrics,
+            }
+        )
+        calibration.windows = windows[-240:]
+
+    feedback = (
+        dict(calibration.feedback)
+        if isinstance(calibration.feedback, dict)
+        else {}
+    )
+    if action == "feedback":
+        cue_kind = str(data.get("cue_kind", ""))
+        valid_cues = {
+            IntegrityEvent.Kind.FACE_MISSING,
+            IntegrityEvent.Kind.MULTIPLE_FACES,
+            IntegrityEvent.Kind.GAZE_AWAY,
+            IntegrityEvent.Kind.BODY_NOT_FRAMED,
+            IntegrityEvent.Kind.HANDS_NOT_VISIBLE,
+            IntegrityEvent.Kind.CAMERA_BLURRY,
+            IntegrityEvent.Kind.LOW_LIGHT,
+            IntegrityEvent.Kind.EXCESSIVE_MOTION,
+        }
+        if cue_kind not in valid_cues:
+            return _error("Unknown coaching cue.")
+        key = f"incorrect:{cue_kind}"
+        feedback[key] = min(int(feedback.get(key, 0)) + 1, 10_000)
+        feedback["last_at"] = timezone.now().isoformat()
+        calibration.feedback = feedback
+
+    calibration.save()
+    return JsonResponse(
+        {
+            "ok": True,
+            "calibrated": calibration.calibrated,
+            "sample_count": calibration.sample_count,
+        }
+    )
 
 
 @require_POST
@@ -301,17 +442,23 @@ def realtime_session(request, interview_id):
                 "transcription": {"model": settings.OPENAI_TRANSCRIPTION_MODEL},
                 "turn_detection": {
                     "type": "semantic_vad",
-                    "eagerness": "high",
+                    "eagerness": "medium",
                     "create_response": True,
                     "interrupt_response": True,
                 },
             },
-            "output": {"voice": settings.OPENAI_REALTIME_VOICE},
+            "output": {
+                "voice": (
+                    settings.OPENAI_REALTIME_VOICE_MALE
+                    if interview.interviewer_style == InterviewSession.InterviewerStyle.MALE
+                    else settings.OPENAI_REALTIME_VOICE_FEMALE
+                )
+            },
         },
         "truncation": {
             "type": "retention_ratio",
-            "retention_ratio": 0.8,
-            "token_limits": {"post_instructions": 8_000},
+            "retention_ratio": 0.7,
+            "token_limits": {"post_instructions": 3_000},
         },
     }
     safety_identifier = hashlib.sha256(
@@ -426,12 +573,66 @@ def complete_interview(request, interview_id):
     if interview.status != InterviewSession.Status.ACTIVE:
         return _error("Interview is not active.", 409)
 
+    data = _payload(request)
+    completion_reason = str(data.get("completion_reason", "candidate_ended"))
+    if completion_reason not in {"candidate_ended", "time_limit", "integrity_timeout"}:
+        completion_reason = "candidate_ended"
+    raw_realtime_usage = data.get("realtime_usage")
+    raw_realtime_usage = (
+        raw_realtime_usage if isinstance(raw_realtime_usage, dict) else {}
+    )
+    allowed_usage = {
+        "input_text_tokens",
+        "input_audio_tokens",
+        "cached_text_tokens",
+        "cached_audio_tokens",
+        "output_text_tokens",
+        "output_audio_tokens",
+        "responses",
+    }
+    realtime_usage = {}
+    for key in allowed_usage:
+        try:
+            realtime_usage[key] = max(
+                0,
+                min(int(raw_realtime_usage.get(key, 0)), 100_000_000),
+            )
+        except (TypeError, ValueError):
+            realtime_usage[key] = 0
+    if any(realtime_usage.values()):
+        input_text = realtime_usage["input_text_tokens"]
+        input_audio = realtime_usage["input_audio_tokens"]
+        cached_text = min(realtime_usage["cached_text_tokens"], input_text)
+        cached_audio = min(realtime_usage["cached_audio_tokens"], input_audio)
+        realtime_usage["model"] = settings.OPENAI_REALTIME_MODEL
+        if "gpt-realtime-2.1-mini" in settings.OPENAI_REALTIME_MODEL:
+            estimated = (
+                (input_text - cached_text) * REALTIME_MINI_RATES_PER_MILLION["text_input"]
+                + cached_text * REALTIME_MINI_RATES_PER_MILLION["text_cached"]
+                + (input_audio - cached_audio) * REALTIME_MINI_RATES_PER_MILLION["audio_input"]
+                + cached_audio * REALTIME_MINI_RATES_PER_MILLION["audio_cached"]
+                + realtime_usage["output_text_tokens"] * REALTIME_MINI_RATES_PER_MILLION["text_output"]
+                + realtime_usage["output_audio_tokens"] * REALTIME_MINI_RATES_PER_MILLION["audio_output"]
+            ) / 1_000_000
+            realtime_usage["estimated_usd"] = round(estimated, 6)
+            realtime_usage["estimate_note"] = (
+                "Realtime response-token estimate; transcription charges are excluded."
+            )
+        ai_usage = (
+            dict(interview.ai_usage)
+            if isinstance(interview.ai_usage, dict)
+            else {}
+        )
+        ai_usage["realtime"] = realtime_usage
+        interview.ai_usage = ai_usage
+
     counts = {}
     for event in interview.integrity_events.all():
         counts[event.kind] = counts.get(event.kind, 0) + 1
     interview.monitoring_summary = {
         "event_counts": counts,
         "total_events": sum(counts.values()),
+        "completion_reason": completion_reason,
         "note": (
             "These are observable browser signals, not proof of misconduct. "
             "Review context before drawing conclusions."
@@ -445,6 +646,7 @@ def complete_interview(request, interview_id):
         update_fields=[
             "monitoring_summary",
             "discussion_summary",
+            "ai_usage",
             "status",
             "completed_at",
             "updated_at",
@@ -461,6 +663,7 @@ def complete_interview(request, interview_id):
                 if item.get("speaker") == "candidate"
             ),
             "source": "openai" if used_ai else "local",
+            "ai_usage": interview.ai_usage,
         }
     )
 
@@ -476,12 +679,14 @@ def interview_status(request, interview_id):
             "role": interview.role,
             "mode": interview.mode,
             "response_language": interview.response_language,
+            "planned_minutes": interview.planned_minutes,
             "resume_name": interview.resume_original_name,
             "question_number": interview.current_question,
             "question_count": settings.INTERVIEW_QUESTION_COUNT,
             "transcript": interview.transcript,
             "summary": interview.discussion_summary,
             "monitoring": interview.monitoring_summary,
+            "ai_usage": interview.ai_usage,
         }
     )
 
