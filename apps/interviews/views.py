@@ -18,9 +18,11 @@ from apps.resumes.services import ResumeError, validate_and_extract_resume
 
 from .models import InterviewSession
 from .services import (
+    build_interview_plan,
     fallback_question,
     generate_discussion_summary,
     generate_next_question,
+    initial_interview_progress,
     realtime_instructions,
 )
 
@@ -102,6 +104,9 @@ def start_interview(request):
     role = str(data.get("role", "")).strip()[:160]
     email = str(data.get("email", "")).strip()[:254]
     level = str(data.get("level", "mid")).strip()[:40]
+    interview_type = str(data.get("interview_type", InterviewSession.InterviewType.JOB))
+    if interview_type not in InterviewSession.InterviewType.values:
+        interview_type = InterviewSession.InterviewType.JOB
     mode = str(data.get("mode", InterviewSession.Mode.INTERVIEW))
     if mode not in InterviewSession.Mode.values:
         mode = InterviewSession.Mode.INTERVIEW
@@ -111,6 +116,8 @@ def start_interview(request):
     }
     if response_language not in allowed_languages:
         response_language = "auto"
+    if interview_type == InterviewSession.InterviewType.IELTS:
+        response_language = "english"
     interviewer_style = str(data.get("interviewer_style", InterviewSession.InterviewerStyle.FEMALE))
     if interviewer_style not in InterviewSession.InterviewerStyle.values:
         interviewer_style = InterviewSession.InterviewerStyle.FEMALE
@@ -123,12 +130,16 @@ def start_interview(request):
     planned_minutes = max(5, min(requested_minutes, settings.INTERVIEW_MAX_MINUTES))
     wants_realtime = data.get("realtime") is True
     if not name or not role:
-        return _error("Your name and target role are required.")
+        return _error("Your name and session focus are required.")
     if data.get("consent") is not True:
         return _error("Camera and monitoring consent is required to continue.")
 
     now = timezone.now()
-    resume_file = request.FILES.get("resume")
+    resume_file = (
+        request.FILES.get("resume")
+        if interview_type == InterviewSession.InterviewType.JOB
+        else None
+    )
     resume_text = ""
     if resume_file:
         try:
@@ -140,6 +151,7 @@ def start_interview(request):
         candidate_name=name,
         candidate_email=email,
         role=role,
+        interview_type=interview_type,
         level=level,
         mode=mode,
         response_language=response_language,
@@ -151,9 +163,11 @@ def start_interview(request):
         consented_at=now,
         started_at=now,
         status=InterviewSession.Status.ACTIVE,
+        interview_plan=build_interview_plan(interview_type),
+        interview_progress=initial_interview_progress(interview_type),
     )
     if wants_realtime:
-        question = fallback_question(interview.role, 0)
+        question = fallback_question(interview.role, 0, interview.interview_type)
         return JsonResponse(
             {
                 "ok": True,
@@ -165,6 +179,7 @@ def start_interview(request):
                 "realtime_available": bool(_openai_api_key()),
                 "resume_name": interview.resume_original_name,
                 "mode": interview.mode,
+                "interview_type": interview.interview_type,
                 "interviewer_style": interview.interviewer_style,
                 "interviewer_name": (
                     "Arjun"
@@ -172,6 +187,8 @@ def start_interview(request):
                     else "Maya"
                 ),
                 "max_minutes": interview.planned_minutes,
+                "interview_plan": interview.interview_plan,
+                "interview_progress": interview.interview_progress,
             }
         )
 
@@ -198,8 +215,65 @@ def start_interview(request):
             "source": "openai" if used_ai else "local",
             "max_minutes": interview.planned_minutes,
             "interviewer_style": interview.interviewer_style,
+            "interview_type": interview.interview_type,
+            "interview_plan": interview.interview_plan,
+            "interview_progress": interview.interview_progress,
         }
     )
+
+
+@require_POST
+def update_interview_progress(request, interview_id):
+    interview = get_object_or_404(InterviewSession, id=interview_id)
+    if interview.status != InterviewSession.Status.ACTIVE:
+        return _error("Interview is not active.", 409)
+
+    data = _payload(request)
+    requested_stage = str(data.get("stage", "")).strip().lower()
+    note = " ".join(str(data.get("note", "")).split())[:240]
+    plan = interview.interview_plan or build_interview_plan(interview.interview_type)
+    stage_ids = [stage["id"] for stage in plan]
+    if requested_stage not in stage_ids:
+        return _error("Unknown interview stage.")
+
+    progress = (
+        dict(interview.interview_progress)
+        if isinstance(interview.interview_progress, dict)
+        else initial_interview_progress()
+    )
+    current_stage = progress.get("current_stage", stage_ids[0])
+    if current_stage not in stage_ids:
+        current_stage = stage_ids[0]
+    current_index = stage_ids.index(current_stage)
+    requested_index = stage_ids.index(requested_stage)
+    if requested_index < current_index:
+        return _error("Interview stages cannot move backwards.", 409)
+    if requested_index > current_index + 1:
+        return _error("Complete the current stage before advancing.", 409)
+
+    completed = [stage for stage in progress.get("completed_stages", []) if stage in stage_ids]
+    history = list(progress.get("history", []))
+    if requested_index == current_index + 1:
+        if current_stage not in completed:
+            completed.append(current_stage)
+        history.append(
+            {
+                "from": current_stage,
+                "to": requested_stage,
+                "note": note,
+                "at": timezone.now().isoformat(),
+            }
+        )
+        current_stage = requested_stage
+
+    progress = {
+        "current_stage": current_stage,
+        "completed_stages": completed,
+        "history": history[-12:],
+    }
+    interview.interview_progress = progress
+    interview.save(update_fields=["interview_progress", "updated_at"])
+    return JsonResponse({"ok": True, "progress": progress})
 
 
 @require_POST
@@ -431,20 +505,58 @@ def realtime_session(request, interview_id):
     if not offer_sdp.startswith("v=0") or len(offer_sdp) > 200_000:
         return _error("The WebRTC offer is invalid.")
 
+    interview_plan = interview.interview_plan or build_interview_plan(
+        interview.interview_type
+    )
     session_config = {
         "type": "realtime",
         "model": settings.OPENAI_REALTIME_MODEL,
         "output_modalities": ["audio"],
-        "max_output_tokens": 320,
+        "max_output_tokens": 640,
+        "reasoning": {"effort": "low"},
         "instructions": realtime_instructions(interview),
+        "tools": [
+            {
+                "type": "function",
+                "name": "update_interview_stage",
+                "description": (
+                    "Advance the structured interview by exactly one stage after "
+                    "enough relevant evidence has been collected. Never use visual "
+                    "or monitoring signals as evidence."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "stage": {
+                            "type": "string",
+                            "enum": [stage["id"] for stage in interview_plan],
+                            "description": "The next interview stage.",
+                        },
+                        "note": {
+                            "type": "string",
+                            "maxLength": 240,
+                            "description": "A short neutral note about topic coverage, without scoring.",
+                        },
+                    },
+                    "required": ["stage", "note"],
+                    "additionalProperties": False,
+                },
+            }
+        ],
+        "tool_choice": "auto",
         "audio": {
             "input": {
                 "transcription": {"model": settings.OPENAI_TRANSCRIPTION_MODEL},
                 "turn_detection": {
                     "type": "semantic_vad",
                     "eagerness": "medium",
-                    "create_response": True,
-                    "interrupt_response": True,
+                    # Keep VAD for natural turn detection, but let the browser
+                    # start the next response only after transcription and the
+                    # current interviewer turn have both finished.
+                    "create_response": False,
+                    # Brief noise or echo must not cancel the interviewer's
+                    # sentence.
+                    "interrupt_response": False,
                 },
             },
             "output": {
@@ -664,6 +776,8 @@ def complete_interview(request, interview_id):
             ),
             "source": "openai" if used_ai else "local",
             "ai_usage": interview.ai_usage,
+            "interview_plan": interview.interview_plan,
+            "interview_progress": interview.interview_progress,
         }
     )
 
@@ -677,6 +791,7 @@ def interview_status(request, interview_id):
             "id": str(interview.id),
             "status": interview.status,
             "role": interview.role,
+            "interview_type": interview.interview_type,
             "mode": interview.mode,
             "response_language": interview.response_language,
             "planned_minutes": interview.planned_minutes,

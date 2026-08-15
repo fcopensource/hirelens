@@ -48,6 +48,11 @@ const state = {
   captionsEnabled: true,
   candidateSpeaking: false,
   mayaSpeaking: false,
+  responseActive: false,
+  pendingCandidateResponse: false,
+  pendingResponseOptions: null,
+  responseReadyAt: 0,
+  responseReadyTimer: null,
   candidateDraft: "",
   mayaDraft: "",
   suppressMayaTurn: false,
@@ -133,6 +138,13 @@ const state = {
     responses: 0,
   },
   usageResponseIds: new Set(),
+  handledFunctionCalls: new Set(),
+  interviewPlan: [],
+  interviewType: "job",
+  interviewProgress: {
+    current_stage: "opening",
+    completed_stages: [],
+  },
   recoveringTruncation: false,
   avatar: null,
   interviewerStyle: "female",
@@ -275,6 +287,90 @@ $("#checkDevices").addEventListener("click", checkDevices);
 
 const resumeInput = $("#resumeFile");
 const resumeDrop = $("#resumeDrop");
+const CATEGORY_UI = {
+  job: {
+    hint: "Choose a job interview and optionally add your resume.",
+    focusLabel: "Role you’re preparing for",
+    focusPlaceholder: "Senior Python Engineer",
+    levelLabel: "Experience level",
+    levels: ["Early career", "Mid-level", "Senior"],
+    interviewMode: "Real interview",
+    practiceMode: "Practice & learn",
+    roomLabel: "Corporate interview",
+    summaryLeft: "DEMONSTRATED IN THE CONVERSATION",
+    summaryRight: "USEFUL HUMAN FOLLOW-UP",
+  },
+  ielts: {
+    hint: "Practice a structured IELTS Speaking simulation in English. No resume is needed.",
+    focusLabel: "IELTS goal",
+    focusPlaceholder: "Target band 7.5 · Academic",
+    levelLabel: "Current speaking level",
+    levels: ["Foundation", "Intermediate", "Advanced"],
+    interviewMode: "Mock speaking test",
+    practiceMode: "Practice with feedback",
+    roomLabel: "IELTS Speaking",
+    summaryLeft: "OBSERVED SPEAKING STRENGTHS",
+    summaryRight: "PRACTICE NEXT",
+  },
+  speaking: {
+    hint: "Build fluency and confidence through a natural guided conversation.",
+    focusLabel: "Speaking goal or topic",
+    focusPlaceholder: "Workplace English and confidence",
+    levelLabel: "Speaking confidence",
+    levels: ["Building", "Comfortable", "Advanced"],
+    interviewMode: "Guided conversation",
+    practiceMode: "Coach me",
+    roomLabel: "Speaking practice",
+    summaryLeft: "WHAT WORKED WELL",
+    summaryRight: "PRACTICE NEXT",
+  },
+  viva: {
+    hint: "Defend your research or project through a structured academic viva.",
+    focusLabel: "Research or project topic",
+    focusPlaceholder: "High Contrast Subspaces for Outlier Detection",
+    levelLabel: "Study level",
+    levels: ["Undergraduate", "Postgraduate", "Doctoral"],
+    interviewMode: "Mock viva",
+    practiceMode: "Practice & learn",
+    roomLabel: "Academic viva",
+    summaryLeft: "DEMONSTRATED UNDERSTANDING",
+    summaryRight: "QUESTIONS TO REVISIT",
+  },
+};
+
+function selectedInterviewType() {
+  return document.querySelector('[name="interview_type"]:checked')?.value || "job";
+}
+
+function updateCategoryUi() {
+  const type = selectedInterviewType();
+  const config = CATEGORY_UI[type] || CATEGORY_UI.job;
+  state.interviewType = type;
+  $("#setupCategoryHint").textContent = config.hint;
+  $("#focusLabel").textContent = config.focusLabel;
+  $("#targetRole").placeholder = config.focusPlaceholder;
+  $("#levelLabel").textContent = config.levelLabel;
+  $("#levelOptionJunior").textContent = config.levels[0];
+  $("#levelOptionMid").textContent = config.levels[1];
+  $("#levelOptionSenior").textContent = config.levels[2];
+  $("#sessionMode").options[0].textContent = config.interviewMode;
+  $("#sessionMode").options[1].textContent = config.practiceMode;
+  const ieltsOnly = type === "ielts";
+  $("#responseLanguage").disabled = ieltsOnly;
+  if (ieltsOnly) $("#responseLanguage").value = "english";
+  $("#languageField").classList.toggle("locked", ieltsOnly);
+  $("#resumeField").hidden = type !== "job";
+  if (type !== "job") {
+    resumeInput.value = "";
+    showResume(null);
+  }
+}
+
+document.querySelectorAll('[name="interview_type"]').forEach((input) => {
+  input.addEventListener("change", updateCategoryUi);
+});
+updateCategoryUi();
+
 function showResume(file) {
   if (!file) {
     $("#resumeTitle").textContent = "Add your resume";
@@ -310,7 +406,7 @@ $("#setupForm").addEventListener("submit", async (event) => {
   const name = $("#candidateName").value.trim();
   const role = $("#targetRole").value.trim();
   if (!name || !role) {
-    error.textContent = "Enter your name and the role before continuing.";
+    error.textContent = "Enter your name and session focus before continuing.";
     return;
   }
   if (!$("#consent").checked) {
@@ -345,15 +441,22 @@ $("#setupForm").addEventListener("submit", async (event) => {
     state.interviewId = payload.interview_id;
     state.interviewerStyle = payload.interviewer_style === "male" ? "male" : "female";
     state.interviewerName = payload.interviewer_name || (state.interviewerStyle === "male" ? "Arjun" : "Maya");
+    state.interviewType = payload.interview_type || selectedInterviewType();
     state.fallbackQuestion = payload.question;
+    state.interviewPlan = Array.isArray(payload.interview_plan) ? payload.interview_plan : [];
+    state.interviewProgress = payload.interview_progress || state.interviewProgress;
     state.startedAt = Date.now();
     state.maxSeconds = Math.max(5, Number(payload.max_minutes || document.body.dataset.defaultMinutes || 12)) * 60;
-    $("#roleLabel").textContent = role;
+    const category = CATEGORY_UI[state.interviewType] || CATEGORY_UI.job;
+    $("#roleLabel").textContent = `${category.roomLabel} · ${role}`;
     $("#candidateLabel").textContent = name;
     $("#candidateInitial").textContent = (name[0] || "Y").toUpperCase();
     $("#completeName").textContent = name.split(/\s+/)[0];
-    $("#sessionModeLabel").textContent = $("#sessionMode").value === "practice" ? "Practice & learn" : "Interview";
+    $("#sessionModeLabel").textContent = $("#sessionMode").value === "practice"
+      ? category.practiceMode
+      : category.interviewMode;
     updateInterviewerUi();
+    renderInterviewArc();
     setupView.hidden = true;
     interviewView.hidden = false;
     candidateVideo.srcObject = state.stream;
@@ -447,11 +550,8 @@ async function connectRealtime(payload) {
       clearInterval(state.visionContextTimer);
       state.visionContextTimer = setInterval(syncVisionContext, 4000);
       syncVisionContext(true);
-      sendEvent({
-        type: "response.create",
-        response: {
-          instructions: "Greet the candidate by first name and immediately ask one complete, relevant interview question. Use no preamble and finish the sentence.",
-        },
+      beginRealtimeResponse({
+        instructions: "Greet the candidate by first name and immediately ask one complete, relevant interview question. Use no preamble and finish the sentence.",
       });
     });
     channel.addEventListener("close", () => {
@@ -488,6 +588,121 @@ function sendEvent(event) {
   return true;
 }
 
+function beginRealtimeResponse(response = {}) {
+  if (state.responseActive || state.completing) return false;
+  const sent = sendEvent({ type: "response.create", response });
+  if (sent) state.responseActive = true;
+  return sent;
+}
+
+function queueCandidateResponse() {
+  state.pendingCandidateResponse = true;
+  flushCandidateResponse();
+}
+
+function queueRealtimeResponse(response = {}) {
+  state.pendingResponseOptions = response;
+  flushCandidateResponse();
+}
+
+function flushCandidateResponse() {
+  clearTimeout(state.responseReadyTimer);
+  state.responseReadyTimer = null;
+  const hasPendingResponse = Boolean(state.pendingResponseOptions) || state.pendingCandidateResponse;
+  if (!hasPendingResponse || !state.realtimeConnected || state.completing) return;
+  if (state.responseActive || state.mayaSpeaking || state.candidateSpeaking) {
+    state.responseReadyTimer = setTimeout(flushCandidateResponse, 250);
+    return;
+  }
+  const playbackWait = state.responseReadyAt - Date.now();
+  if (playbackWait > 0) {
+    state.responseReadyTimer = setTimeout(flushCandidateResponse, playbackWait);
+    return;
+  }
+  // A short buffer lets the final WebRTC audio frames play before generation
+  // begins for the next turn, avoiding clipped or overlapping speech.
+  const response = state.pendingResponseOptions || {};
+  state.pendingResponseOptions = null;
+  state.pendingCandidateResponse = false;
+  if (!beginRealtimeResponse(response)) {
+    state.pendingResponseOptions = response;
+    state.pendingCandidateResponse = true;
+    state.responseReadyTimer = setTimeout(flushCandidateResponse, 350);
+  }
+}
+
+function renderInterviewArc() {
+  const current = state.interviewProgress?.current_stage || "opening";
+  const completed = new Set(state.interviewProgress?.completed_stages || []);
+  const stages = state.interviewPlan.length
+    ? state.interviewPlan
+    : [
+      { id: "opening", label: "Opening" },
+      { id: "experience", label: "Experience" },
+      { id: "technical", label: "Role depth" },
+      { id: "scenario", label: "Scenario" },
+      { id: "reflection", label: "Reflection" },
+    ];
+  const container = $(".arc-stages");
+  container.replaceChildren();
+  stages.forEach((stage, index) => {
+    const status = completed.has(stage.id) ? "complete" : stage.id === current ? "current" : "pending";
+    const node = document.createElement("div");
+    node.className = `interview-stage ${status}`;
+    node.dataset.interviewStage = stage.id;
+    node.setAttribute("aria-current", status === "current" ? "step" : "false");
+    const marker = document.createElement("span");
+    marker.textContent = status === "complete" ? "✓" : String(index + 1);
+    const label = document.createElement("strong");
+    label.textContent = stage.label;
+    node.append(marker, label);
+    container.appendChild(node);
+  });
+  const currentStage = stages.find((stage) => stage.id === current);
+  const label = currentStage?.label || "Opening";
+  $("#arcCurrent").textContent = label;
+}
+
+async function handleInterviewStageCall(call = {}) {
+  const callId = call.call_id || call.callId || "";
+  const name = call.name || "";
+  if (!callId || name !== "update_interview_stage" || state.handledFunctionCalls.has(callId)) return;
+  state.handledFunctionCalls.add(callId);
+  let args = {};
+  try {
+    args = typeof call.arguments === "string" ? JSON.parse(call.arguments) : (call.arguments || {});
+  } catch {
+    args = {};
+  }
+
+  let output;
+  try {
+    const payload = await api(`/api/interviews/${state.interviewId}/progress/`, {
+      method: "POST",
+      body: JSON.stringify({ stage: args.stage, note: args.note }),
+    });
+    state.interviewProgress = payload.progress;
+    renderInterviewArc();
+    output = { ok: true, progress: payload.progress };
+  } catch (error) {
+    output = { ok: false, error: error.message, current_stage: state.interviewProgress.current_stage };
+  }
+
+  sendEvent({
+    type: "conversation.item.create",
+    item: {
+      type: "function_call_output",
+      call_id: callId,
+      output: JSON.stringify(output),
+    },
+  });
+  queueRealtimeResponse({
+    instructions: output.ok
+      ? "Continue naturally in the new interview stage. Ask one complete, concise question without mentioning the stage tool."
+      : "Continue the current interview stage. Ask one useful follow-up question and do not mention the tool error.",
+  });
+}
+
 function currentVisionContext() {
   const confidence = Math.round(state.visionConfidence * 100);
   const eyeStatus = $("#eyeStatus")?.textContent || "unknown";
@@ -504,6 +719,10 @@ function currentVisionContext() {
 
 function syncVisionContext(force = false) {
   if (!state.realtimeConnected || state.completing || !state.calibrationComplete) return;
+  // Never insert telemetry into the live conversation while either side is
+  // speaking. This keeps the audio turn stable and prevents needless context
+  // churn during an active sentence.
+  if (state.candidateSpeaking || state.mayaSpeaking) return;
   const snapshot = currentVisionContext();
   const signature = JSON.stringify(snapshot);
   const now = Date.now();
@@ -531,6 +750,12 @@ function syncVisionContext(force = false) {
 
 function handleRealtimeEvent(event) {
   const type = event.type || "";
+  if (type === "response.function_call_arguments.done") {
+    handleInterviewStageCall(event);
+  }
+  if (type === "response.output_item.done" && event.item?.type === "function_call") {
+    handleInterviewStageCall(event.item);
+  }
   if (type === "input_audio_buffer.speech_started") {
     state.candidateSpeaking = true;
     state.candidateDraft = "";
@@ -551,9 +776,13 @@ function handleRealtimeEvent(event) {
   if (type === "conversation.item.input_audio_transcription.completed") {
     const text = (event.transcript || state.candidateDraft).trim();
     state.candidateDraft = "";
-    if (text) commitTurn("candidate", text);
+    if (text) {
+      commitTurn("candidate", text);
+      queueCandidateResponse();
+    }
   }
 
+  if (type === "response.created") state.responseActive = true;
   if (type === "response.created" || type === "response.output_audio.delta") setMayaSpeaking(true);
   if (type === "response.output_audio_transcript.delta" || type === "response.audio_transcript.delta") {
     state.mayaDraft += event.delta || "";
@@ -569,17 +798,24 @@ function handleRealtimeEvent(event) {
   }
   if (type === "response.done") {
     const response = event.response || {};
+    state.responseActive = false;
+    state.responseReadyAt = Date.now() + 350;
     accumulateRealtimeUsage(response);
     handleResponseOutcome(response);
     setMayaSpeaking(false);
     state.activeVisionCue = false;
-    if (!state.mayaDraft) setTimeout(() => {
+    if (!state.mayaDraft && response.status === "completed") setTimeout(() => {
       if (!state.mayaSpeaking) showCaption("maya", "I’m listening.");
     }, 1800);
     setTimeout(flushVisionCue, 650);
+    state.responseReadyTimer = setTimeout(flushCandidateResponse, 350);
   }
   if (type === "error") {
+    state.responseActive = false;
     toast(event.error?.message || `${state.interviewerName} had trouble responding. Please try again.`, true);
+    if (state.pendingCandidateResponse) {
+      state.responseReadyTimer = setTimeout(flushCandidateResponse, 500);
+    }
   }
 }
 
@@ -599,17 +835,14 @@ function handleResponseOutcome(response = {}) {
   ) {
     state.recoveringTruncation = true;
     setTimeout(() => {
-      const sent = sendEvent({
-        type: "response.create",
-        response: {
-          max_output_tokens: 160,
-          metadata: { response_purpose: "truncation_recovery" },
-          instructions: (
-            "Your previous spoken sentence was cut off. Continue exactly where "
-            + "it stopped, complete only that sentence in at most 18 words, "
-            + "then stop. Do not restart, apologize, or ask another question."
-          ),
-        },
+      const sent = beginRealtimeResponse({
+        max_output_tokens: 160,
+        metadata: { response_purpose: "truncation_recovery" },
+        instructions: (
+          "Your previous spoken sentence was cut off. Continue exactly where "
+          + "it stopped, complete only that sentence in at most 18 words, "
+          + "then stop. Do not restart, apologize, or ask another question."
+        ),
       });
       if (!sent) state.recoveringTruncation = false;
     }, 220);
@@ -789,23 +1022,20 @@ function sendRealtimeText(text, vision = false) {
   if (vision) {
     state.suppressMayaTurn = true;
     state.activeVisionCue = true;
-    return sendEvent({
-      type: "response.create",
-      response: {
-        conversation: "none",
-        max_output_tokens: 80,
-        metadata: { response_purpose: "visual_setup" },
-        instructions: (
-          `You are ${state.interviewerName}. Say one short, calm camera-setup sentence using the `
-          + "provided note. Do not evaluate the candidate, repeat a question, "
-          + "or add this note to the interview."
-        ),
-        input: [{
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: clean }],
-        }],
-      },
+    return beginRealtimeResponse({
+      conversation: "none",
+      max_output_tokens: 120,
+      metadata: { response_purpose: "visual_setup" },
+      instructions: (
+        `You are ${state.interviewerName}. Say one short, calm camera-setup sentence using the `
+        + "provided note. Do not evaluate the candidate, repeat a question, "
+        + "or add this note to the interview."
+      ),
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: clean }],
+      }],
     });
   }
   appendTurn("candidate", clean);
@@ -821,7 +1051,7 @@ function sendRealtimeText(text, vision = false) {
       content: [{ type: "input_text", text: clean }],
     },
   });
-  sendEvent({ type: "response.create" });
+  queueCandidateResponse();
   return true;
 }
 
@@ -2158,6 +2388,7 @@ async function completeInterview(reason = "candidate_ended") {
   clearInterval(state.timer);
   clearInterval(state.visionTelemetryTimer);
   clearInterval(state.visionContextTimer);
+  clearTimeout(state.responseReadyTimer);
   clearInterval(state.integrityTimer);
   clearTimeout(state.integrityWarningTimer);
   hideIntegrityShield();
@@ -2199,13 +2430,16 @@ async function completeInterview(reason = "candidate_ended") {
 function renderSummary(summary = {}) {
   const strengths = Array.isArray(summary.demonstrated) ? summary.demonstrated : [];
   const followups = Array.isArray(summary.follow_up) ? summary.follow_up : [];
+  const category = CATEGORY_UI[state.interviewType] || CATEGORY_UI.job;
   $("#summaryPanel").innerHTML = `
     <h3>Discussion recap</h3>
     <p class="summary-intro"></p>
     <div class="summary-grid">
-      <div><h4>DEMONSTRATED IN THE CONVERSATION</h4><ul class="strength-list"></ul></div>
-      <div><h4>USEFUL HUMAN FOLLOW-UP</h4><ul class="follow-list"></ul></div>
+      <div><h4 class="summary-left-title"></h4><ul class="strength-list"></ul></div>
+      <div><h4 class="summary-right-title"></h4><ul class="follow-list"></ul></div>
     </div>`;
+  $("#summaryPanel .summary-left-title").textContent = category.summaryLeft;
+  $("#summaryPanel .summary-right-title").textContent = category.summaryRight;
   $("#summaryPanel .summary-intro").textContent = summary.overview || "Your conversation was completed and is ready for review.";
   const fill = (selector, items, fallback) => {
     const list = $(selector);

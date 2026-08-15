@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{% static 'css/interview.css' %}?v=20260801-integrity-17">
+  <link rel="stylesheet" href="{% static 'css/interview.css' %}?v=20260815-interview-categories-21">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
 </head>
 <body
@@ -22,6 +22,7 @@
   data-max-minutes="{{ max_minutes }}"
   data-default-minutes="{{ default_minutes }}"
 >
+  <div class="page-aurora" aria-hidden="true"><span></span><span></span><span></span></div>
   <header class="topbar">
     <a class="brand" href="/" aria-label="HireLens home">
       <span class="brand-mark"><span></span></span>
@@ -38,9 +39,35 @@
   <main>
     <section class="setup-view" id="setupView">
       <div class="setup-copy">
-        <div class="eyebrow"><span></span> FACE-TO-FACE WITH AI</div>
-        <h1>A real interview.<br><em>Not another form.</em></h1>
+        <div class="eyebrow"><span></span> YOUR PRIVATE AI INTERVIEW STUDIO</div>
+        <h1>A real interview.<br><em>Built around you.</em></h1>
         <p class="lead">Speak naturally with your chosen interviewer in a fast, interruptible video-call experience. Practice, learn, translate, and interview from your own resume.</p>
+        <div class="hero-trust">
+          <span><i data-lucide="zap"></i> Low-latency voice</span>
+          <span><i data-lucide="scan-face"></i> On-device vision</span>
+          <span><i data-lucide="languages"></i> Multilingual</span>
+        </div>
+
+        <div class="hero-room-preview" aria-hidden="true">
+          <div class="hero-preview-head">
+            <span><i data-lucide="radio-tower"></i> LIVE INTERVIEW PREVIEW</span>
+            <em><b></b> Connected</em>
+          </div>
+          <div class="hero-preview-grid">
+            <div class="hero-interviewer">
+              <div class="mini-avatar"><span class="mini-hair"></span><span class="mini-eye left"></span><span class="mini-eye right"></span><span class="mini-mouth"></span></div>
+              <div><strong>Maya</strong><small>AI interviewer</small></div>
+              <span class="voice-wave"><i></i><i></i><i></i><i></i><i></i></span>
+            </div>
+            <div class="hero-conversation">
+              <span class="preview-kicker">ROLE DEPTH · 03</span>
+              <p>“What trade-off mattered most when you designed that system?”</p>
+              <div class="preview-signal-row"><span><i data-lucide="scan-face"></i> Framed</span><span><i data-lucide="hand"></i> Hands</span><span><i data-lucide="sparkles"></i> Clear</span></div>
+            </div>
+          </div>
+          <div class="hero-stage-line"><span class="done"></span><span class="done"></span><span class="active"></span><span></span><span></span></div>
+        </div>
+
         <div class="feature-row">
           <div><i data-lucide="radio-tower"></i><span><strong>Live voice</strong>Natural turns with no submit button</span></div>
           <div><i data-lucide="scan-line"></i><span><strong>Full-frame guidance</strong>Face, upper body, hands and clarity</span></div>
@@ -52,10 +79,31 @@
         <div class="card-heading">
           <span class="step-tag">01 · JOIN THE ROOM</span>
           <h2>Set up your live session</h2>
-          <p>Your resume is optional. Camera frames never leave the browser.</p>
+          <p id="setupCategoryHint">Choose a job interview and optionally add your resume.</p>
         </div>
         <form id="setupForm">
           {% csrf_token %}
+          <div class="field interview-category-field">
+            <span>What would you like to practice?</span>
+            <div class="category-picker" role="radiogroup" aria-label="Interview category">
+              <label>
+                <input type="radio" name="interview_type" value="job" checked>
+                <span><i data-lucide="briefcase-business"></i><b><strong>Corporate job</strong><small>SDE, sales, product and more</small></b><i data-lucide="check" class="category-check"></i></span>
+              </label>
+              <label>
+                <input type="radio" name="interview_type" value="ielts">
+                <span><i data-lucide="badge-check"></i><b><strong>IELTS Speaking</strong><small>Parts 1, 2 and 3 simulation</small></b><i data-lucide="check" class="category-check"></i></span>
+              </label>
+              <label>
+                <input type="radio" name="interview_type" value="speaking">
+                <span><i data-lucide="messages-square"></i><b><strong>Speaking practice</strong><small>Fluency and confidence coaching</small></b><i data-lucide="check" class="category-check"></i></span>
+              </label>
+              <label>
+                <input type="radio" name="interview_type" value="viva">
+                <span><i data-lucide="graduation-cap"></i><b><strong>Academic viva</strong><small>Research and project defense</small></b><i data-lucide="check" class="category-check"></i></span>
+              </label>
+            </div>
+          </div>
           <div class="field-grid">
             <label class="field"><span>Your name</span><input id="candidateName" name="name" type="text" autocomplete="name" maxlength="120" placeholder="Vikram Sharma" required></label>
             <label class="field"><span>Email <small>optional</small></span><input id="candidateEmail" name="email" type="email" autocomplete="email" maxlength="254" placeholder="you@company.com"></label>
@@ -73,8 +121,8 @@
               </label>
             </div>
           </label>
-          <label class="field">
-            <span>Role you’re preparing for</span>
+          <label class="field" id="focusField">
+            <span id="focusLabel">Role you’re preparing for</span>
             <div class="input-icon"><i data-lucide="briefcase-business"></i><input id="targetRole" name="role" type="text" maxlength="160" placeholder="Senior Python Engineer" required></div>
           </label>
           <div class="field-grid">
@@ -85,7 +133,7 @@
                 <option value="practice">Practice &amp; learn</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field" id="languageField">
               <span>Interview language</span>
               <select id="responseLanguage" name="response_language">
                 <option value="auto">Match my language</option>
@@ -99,11 +147,11 @@
             </label>
           </div>
           <label class="field">
-            <span>Experience level</span>
+            <span id="levelLabel">Experience level</span>
             <div class="level-picker" role="radiogroup" aria-label="Experience level">
-              <label><input type="radio" name="level" value="junior"><span>Early career</span></label>
-              <label><input type="radio" name="level" value="mid" checked><span>Mid-level</span></label>
-              <label><input type="radio" name="level" value="senior"><span>Senior</span></label>
+              <label><input type="radio" name="level" value="junior"><span id="levelOptionJunior">Early career</span></label>
+              <label><input type="radio" name="level" value="mid" checked><span id="levelOptionMid">Mid-level</span></label>
+              <label><input type="radio" name="level" value="senior"><span id="levelOptionSenior">Senior</span></label>
             </div>
           </label>
 
@@ -131,12 +179,15 @@
             <span><i data-lucide="activity"></i><strong>Live usage</strong></span>
           </div>
 
-          <label class="resume-drop" id="resumeDrop">
-            <input id="resumeFile" name="resume" type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain">
-            <span class="resume-icon"><i data-lucide="file-up"></i></span>
-            <span class="resume-copy"><strong id="resumeTitle">Add your resume</strong><small id="resumeHint">PDF, DOCX or TXT · up to 5 MB</small></span>
-            <span class="resume-action">Browse</span>
-          </label>
+          <div class="resume-field" id="resumeField">
+            <label class="resume-drop" id="resumeDrop">
+              <input id="resumeFile" name="resume" type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain">
+              <span class="resume-icon"><i data-lucide="file-up"></i></span>
+              <span class="resume-copy"><strong id="resumeTitle">Add your resume</strong><small id="resumeHint">PDF, DOCX or TXT · up to 5 MB</small></span>
+              <span class="resume-action">Browse</span>
+            </label>
+            <p><i data-lucide="shield-check"></i> Resume context is available only for corporate job interviews.</p>
+          </div>
 
           {% if access_code_required %}
           <label class="field">
@@ -187,6 +238,18 @@
           <button id="transcriptToggle" type="button"><i data-lucide="captions"></i> Transcript</button>
         </div>
       </div>
+
+      <nav class="interview-arc" aria-label="Interview progress">
+        <div class="arc-label"><span>INTERVIEW ARC</span><strong id="arcCurrent">Opening</strong></div>
+        <div class="arc-stages">
+          <div class="interview-stage current" data-interview-stage="opening" aria-current="step"><span>1</span><strong>Opening</strong></div>
+          <div class="interview-stage pending" data-interview-stage="experience"><span>2</span><strong>Experience</strong></div>
+          <div class="interview-stage pending" data-interview-stage="technical"><span>3</span><strong>Role depth</strong></div>
+          <div class="interview-stage pending" data-interview-stage="scenario"><span>4</span><strong>Scenario</strong></div>
+          <div class="interview-stage pending" data-interview-stage="reflection"><span>5</span><strong>Reflection</strong></div>
+        </div>
+        <span class="arc-note">Adaptive · resume-aware</span>
+      </nav>
 
       <div class="call-shell">
         <div class="call-grid">
@@ -324,6 +387,6 @@
   </dialog>
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script type="module" src="{% static 'js/interview.js' %}?v=20260801-join-fix-19"></script>
+  <script type="module" src="{% static 'js/interview.js' %}?v=20260815-interview-categories-21"></script>
 </body>
 </html>
