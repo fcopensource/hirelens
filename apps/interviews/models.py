@@ -18,10 +18,21 @@ class InterviewSession(models.Model):
         FEMALE = "female", "Female — Maya"
         MALE = "male", "Male — Arjun"
 
+    class InterviewType(models.TextChoices):
+        JOB = "job", "Corporate job"
+        IELTS = "ielts", "IELTS Speaking"
+        SPEAKING = "speaking", "Speaking practice"
+        VIVA = "viva", "Academic or project viva"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     candidate_name = models.CharField(max_length=120)
     candidate_email = models.EmailField(blank=True)
     role = models.CharField(max_length=160)
+    interview_type = models.CharField(
+        max_length=20,
+        choices=InterviewType.choices,
+        default=InterviewType.JOB,
+    )
     level = models.CharField(max_length=40, default="mid")
     mode = models.CharField(
         max_length=20, choices=Mode.choices, default=Mode.INTERVIEW
@@ -43,6 +54,8 @@ class InterviewSession(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     current_question = models.PositiveSmallIntegerField(default=0)
+    interview_plan = models.JSONField(default=list, blank=True)
+    interview_progress = models.JSONField(default=dict, blank=True)
     transcript = models.JSONField(default=list, blank=True)
     monitoring_summary = models.JSONField(default=dict, blank=True)
     discussion_summary = models.JSONField(default=dict, blank=True)

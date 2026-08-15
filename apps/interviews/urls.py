@@ -28,6 +28,11 @@ urlpatterns = [
         name="calibration",
     ),
     path(
+        "api/interviews/<uuid:interview_id>/progress/",
+        views.update_interview_progress,
+        name="progress",
+    ),
+    path(
         "api/interviews/<uuid:interview_id>/realtime/",
         views.realtime_session,
         name="realtime",

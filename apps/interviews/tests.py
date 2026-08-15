@@ -2,16 +2,23 @@ import json
 import os
 import shutil
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.vision.models import IntegrityEvent, VisionCalibration
 
 from .models import InterviewSession
+from .services import (
+    DiscussionSummary,
+    SUMMARY_NOTICE,
+    generate_discussion_summary,
+)
 
 
 @override_settings(INTERVIEW_QUESTION_COUNT=2)
@@ -50,6 +57,8 @@ class InterviewFlowTests(TestCase):
     def test_home_renders_product(self):
         response = self.client.get(reverse("interviews:index"))
         self.assertContains(response, "A real interview")
+        self.assertContains(response, "IELTS Speaking")
+        self.assertContains(response, "Speaking practice")
         self.assertContains(response, "Add your resume")
         self.assertContains(response, "No automatic cheating or hiring decision")
         self.assertContains(response, "favicon.svg")
@@ -58,6 +67,56 @@ class InterviewFlowTests(TestCase):
         response = self.start(consent=False)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(InterviewSession.objects.count(), 0)
+
+    @patch("apps.interviews.services._client", return_value=None)
+    def test_ielts_start_uses_english_and_ielts_stage_plan(self, _mock_client):
+        response = self.start(
+            realtime=True,
+            interview_type="ielts",
+            role="Target band 7.5",
+            response_language="hindi",
+        )
+        self.assertEqual(response.status_code, 200)
+        session = InterviewSession.objects.get()
+        self.assertEqual(session.interview_type, InterviewSession.InterviewType.IELTS)
+        self.assertEqual(session.response_language, "english")
+        self.assertEqual(session.resume_original_name, "")
+        self.assertEqual(
+            [stage["id"] for stage in session.interview_plan],
+            ["part_one", "cue_card", "long_turn", "part_three", "feedback"],
+        )
+        self.assertIn("Part 1", response.json()["question"])
+
+    def test_non_job_category_does_not_process_or_store_resume(self):
+        resume = SimpleUploadedFile(
+            "should-not-be-used.exe",
+            b"This deliberately unsupported file is ignored outside job interviews.",
+        )
+        response = self.client.post(
+            reverse("interviews:start"),
+            data={
+                "name": "Asha Rao",
+                "role": "Workplace English",
+                "level": "mid",
+                "interview_type": "speaking",
+                "consent": "true",
+                "realtime": "true",
+                "resume": resume,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        session = InterviewSession.objects.get()
+        self.assertEqual(session.interview_type, InterviewSession.InterviewType.SPEAKING)
+        self.assertFalse(bool(session.resume))
+        self.assertEqual(session.resume_text, "")
+
+    @patch("apps.interviews.services._client", return_value=None)
+    def test_unknown_interview_type_falls_back_to_job(self, _mock_client):
+        response = self.start(realtime=True, interview_type="unknown")
+        self.assertEqual(response.status_code, 200)
+        session = InterviewSession.objects.get()
+        self.assertEqual(session.interview_type, InterviewSession.InterviewType.JOB)
+        self.assertEqual(session.interview_plan[0]["id"], "opening")
 
     @patch("apps.interviews.services._client", return_value=None)
     def test_start_applies_candidate_session_budget(self, _mock_client):
@@ -72,6 +131,64 @@ class InterviewFlowTests(TestCase):
         self.assertEqual(interview.planned_minutes, 8)
         self.assertEqual(interview.interviewer_style, "male")
         self.assertEqual(response.json()["interviewer_name"], "Arjun")
+        self.assertEqual(response.json()["interview_progress"]["current_stage"], "opening")
+        self.assertEqual(
+            [stage["id"] for stage in response.json()["interview_plan"]],
+            ["opening", "experience", "technical", "scenario", "reflection"],
+        )
+
+    @patch("apps.interviews.services._client", return_value=None)
+    def test_progress_advances_one_stage_and_persists_neutral_note(self, _mock_client):
+        interview_id = self.start(realtime=True).json()["interview_id"]
+        response = self.client.post(
+            reverse("interviews:progress", args=[interview_id]),
+            data={
+                "stage": "experience",
+                "note": "Candidate described current responsibilities and motivation.",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["progress"]["current_stage"], "experience")
+        self.assertEqual(response.json()["progress"]["completed_stages"], ["opening"])
+        session = InterviewSession.objects.get(id=interview_id)
+        self.assertEqual(session.interview_progress["history"][0]["to"], "experience")
+
+    @patch("apps.interviews.services._client", return_value=None)
+    def test_progress_rejects_stage_skips_and_backwards_moves(self, _mock_client):
+        interview_id = self.start(realtime=True).json()["interview_id"]
+        skipped = self.client.post(
+            reverse("interviews:progress", args=[interview_id]),
+            data={"stage": "technical", "note": "Tried to skip."},
+            content_type="application/json",
+        )
+        self.assertEqual(skipped.status_code, 409)
+        self.client.post(
+            reverse("interviews:progress", args=[interview_id]),
+            data={"stage": "experience", "note": "Opening covered."},
+            content_type="application/json",
+        )
+        backwards = self.client.post(
+            reverse("interviews:progress", args=[interview_id]),
+            data={"stage": "opening", "note": "Move back."},
+            content_type="application/json",
+        )
+        self.assertEqual(backwards.status_code, 409)
+
+    @patch("apps.interviews.services._client", return_value=None)
+    def test_progress_uses_category_specific_stage_order(self, _mock_client):
+        interview_id = self.start(
+            realtime=True,
+            interview_type="ielts",
+            role="Target band 7",
+        ).json()["interview_id"]
+        response = self.client.post(
+            reverse("interviews:progress", args=[interview_id]),
+            data={"stage": "cue_card", "note": "Part 1 questions completed."},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["progress"]["current_stage"], "cue_card")
 
     @patch("apps.interviews.services._client", return_value=None)
     def test_start_rejects_unknown_interviewer_style(self, _mock_client):
@@ -138,6 +255,74 @@ class InterviewFlowTests(TestCase):
             interview.monitoring_summary["completion_reason"],
             "candidate_ended",
         )
+
+    def test_summary_uses_validated_structured_output(self):
+        interview = InterviewSession.objects.create(
+            candidate_name="Asha Rao",
+            role="Python Engineer",
+            level="mid",
+            consented_at=timezone.now(),
+            transcript=[
+                {
+                    "speaker": "candidate",
+                    "text": "I reduced API failures by forty percent.",
+                }
+            ],
+        )
+        parsed_summary = DiscussionSummary(
+            overview="The candidate discussed a measured reliability improvement.",
+            demonstrated=[
+                "Explained a concrete service reliability outcome.",
+                "Connected implementation work to an operational metric.",
+            ],
+            follow_up=[
+                "Validate the candidate's ownership of the migration.",
+                "Explore how the failure reduction was measured.",
+            ],
+            notice=SUMMARY_NOTICE,
+        )
+        response = SimpleNamespace(
+            output_parsed=parsed_summary,
+            usage=SimpleNamespace(input_tokens=120, output_tokens=80),
+        )
+        client = MagicMock()
+        client.responses.parse.return_value = response
+
+        with patch("apps.interviews.services._client", return_value=client):
+            summary, used_ai = generate_discussion_summary(interview)
+
+        self.assertTrue(used_ai)
+        self.assertEqual(summary["notice"], SUMMARY_NOTICE)
+        client.responses.parse.assert_called_once()
+        request = client.responses.parse.call_args.kwargs
+        self.assertEqual(request["max_output_tokens"], 640)
+        self.assertEqual(request["text_format"].__name__, "DiscussionSummary")
+        interview.refresh_from_db()
+        self.assertEqual(interview.openai_request_count, 1)
+        self.assertEqual(interview.ai_usage["text"]["input_tokens"], 120)
+        self.assertEqual(interview.ai_usage["text"]["output_tokens"], 80)
+
+    def test_incomplete_structured_summary_uses_safe_fallback(self):
+        interview = InterviewSession.objects.create(
+            candidate_name="Asha Rao",
+            role="Python Engineer",
+            level="mid",
+            consented_at=timezone.now(),
+        )
+        response = SimpleNamespace(
+            output_parsed=None,
+            usage=SimpleNamespace(input_tokens=90, output_tokens=30),
+        )
+        client = MagicMock()
+        client.responses.parse.return_value = response
+
+        with patch("apps.interviews.services._client", return_value=client):
+            summary, used_ai = generate_discussion_summary(interview)
+
+        self.assertFalse(used_ai)
+        self.assertEqual(summary["notice"], SUMMARY_NOTICE)
+        interview.refresh_from_db()
+        self.assertEqual(interview.openai_request_count, 1)
 
     @patch("apps.interviews.services._client", return_value=None)
     def test_records_only_allowlisted_integrity_event_details(self, _mock_client):
@@ -374,12 +559,51 @@ class InterviewFlowTests(TestCase):
         session_config = json.loads(call.kwargs["files"]["session"][1])
         self.assertEqual(session_config["audio"]["output"]["voice"], "cedar")
         self.assertIn("You are Arjun", session_config["instructions"])
-        session_config = call.kwargs["files"]["session"][1]
-        self.assertIn('"type": "semantic_vad"', session_config)
-        self.assertIn('"eagerness": "medium"', session_config)
-        self.assertIn('"max_output_tokens": 320', session_config)
-        self.assertIn('"retention_ratio": 0.7', session_config)
-        self.assertIn('"post_instructions": 3000', session_config)
+        self.assertEqual(session_config["tool_choice"], "auto")
+        self.assertEqual(session_config["tools"][0]["name"], "update_interview_stage")
+        self.assertEqual(
+            session_config["tools"][0]["parameters"]["properties"]["stage"]["enum"],
+            ["opening", "experience", "technical", "scenario", "reflection"],
+        )
+        self.assertIn("Move through these stages in order", session_config["instructions"])
+        self.assertEqual(session_config["reasoning"]["effort"], "low")
+        self.assertEqual(session_config["max_output_tokens"], 640)
+        turn_detection = session_config["audio"]["input"]["turn_detection"]
+        self.assertEqual(turn_detection["type"], "semantic_vad")
+        self.assertEqual(turn_detection["eagerness"], "medium")
+        self.assertFalse(turn_detection["create_response"])
+        self.assertFalse(turn_detection["interrupt_response"])
+        self.assertIn("finish the current short sentence", session_config["instructions"])
+        self.assertEqual(session_config["truncation"]["retention_ratio"], 0.7)
+        self.assertEqual(
+            session_config["truncation"]["token_limits"]["post_instructions"],
+            3_000,
+        )
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @patch("apps.interviews.views.httpx.Client")
+    def test_realtime_ielts_session_uses_ielts_prompt_and_tools(self, client_class):
+        interview_id = self.start(
+            realtime=True,
+            interview_type="ielts",
+            role="Target band 7.5",
+        ).json()["interview_id"]
+        upstream = MagicMock(status_code=200, text="v=0\r\nanswer-sdp")
+        client_class.return_value.__enter__.return_value.post.return_value = upstream
+        response = self.client.post(
+            reverse("interviews:realtime", args=[interview_id]),
+            data="v=0\r\noffer-sdp",
+            content_type="application/sdp",
+        )
+        self.assertEqual(response.status_code, 200)
+        call = client_class.return_value.__enter__.return_value.post.call_args
+        config = json.loads(call.kwargs["files"]["session"][1])
+        self.assertIn("IELTS Speaking simulation", config["instructions"])
+        self.assertIn("Resume use is disabled", config["instructions"])
+        self.assertEqual(
+            config["tools"][0]["parameters"]["properties"]["stage"]["enum"],
+            ["part_one", "cue_card", "long_turn", "part_three", "feedback"],
+        )
 
     @patch("apps.interviews.services._client", return_value=None)
     def test_complete_stores_allowlisted_realtime_usage(self, _mock_client):
